@@ -1,0 +1,124 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../server/generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Account {
+  id              String   @id
+  email           String?
+  displayName     String   @default("")
+  city            String   @default("")
+  countryCode     String   @default("")
+  cityId          String?
+  engagement      String   @default("undisclosed")
+  profileRevision Int      @default(0)
+  personalDetails Json     @default("{}")
+  customProfile   Json     @default("{}")
+  createdAt       DateTime? @default(now())
+  memberships     Member[]
+}
+
+model Questionnaire {
+  id       String    @id
+  content  Json
+  createdAt DateTime @default(now())
+  sessions Session[]
+}
+
+model ContentState {
+  id              String @id
+  publishedId     String
+  publishedFields Json   @default("[]")
+  draft           Json
+  revision        Int    @default(0)
+  highestQuestionId Int  @default(150)
+}
+
+model ContentEvent {
+  id        Int      @id @default(autoincrement())
+  actor     String
+  action    String
+  subject   String
+  createdAt DateTime @default(now())
+}
+
+model Session {
+  id              String        @id @default(uuid())
+  questionnaireId String
+  questionnaire   Questionnaire @relation(fields: [questionnaireId], references: [id])
+  createdAt       DateTime      @default(now())
+  closedAt        DateTime?
+  firstComparisonAt DateTime?
+  members         Member[]
+  invitations     Invitation[]
+  reviews         Review[]
+}
+
+model Member {
+  sessionId String
+  accountId String
+  seat      Int
+  alias     String
+  sharedProfileFields String[] @default([])
+  sharedProfileRevision Int?
+  sharedFieldsVersion String?
+  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  answers   Answer[]
+  consents  Consent[]
+
+  @@id([sessionId, accountId])
+  @@unique([sessionId, seat])
+  @@index([accountId])
+}
+
+model Consent {
+  sessionId   String
+  accountId   String
+  category    Int
+  fingerprint String
+  member      Member @relation(fields: [sessionId, accountId], references: [sessionId, accountId], onDelete: Cascade)
+
+  @@id([sessionId, accountId, category])
+}
+
+model Invitation {
+  digest      String    @id
+  sessionId   String
+  email       String
+  expiresAt   DateTime
+  session     Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId])
+}
+
+model Answer {
+  sessionId  String
+  accountId  String
+  questionId Int
+  choice     String
+  text       String
+  importance Int
+  deferred   Boolean
+  revision   Int
+  member     Member @relation(fields: [sessionId, accountId], references: [sessionId, accountId], onDelete: Cascade)
+
+  @@id([sessionId, accountId, questionId])
+}
+
+model Review {
+  sessionId    String
+  questionId   Int
+  status       String
+  note         String
+  revision     Int
+  approvedOne  Boolean @default(false)
+  approvedTwo  Boolean @default(false)
+  session      Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@id([sessionId, questionId])
+}

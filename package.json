@@ -1,0 +1,1 @@
+{"name":"mawadda","version":"0.1.0","private":true,"description":"Arabic premarital conversation questionnaire prototype","scripts":{"dev":"node scripts/serve.cjs","start":"node scripts/serve.cjs","test":"node test.cjs","check":"node --check dist/app.js && node --check dist/questions.js"},"engines":{"node":">=20"}}

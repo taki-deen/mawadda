@@ -1,0 +1,4 @@
+/server/generated/
+/build/
+/.npm-cache/
+/.geo-source/

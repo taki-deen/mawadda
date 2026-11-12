@@ -1,0 +1,39 @@
+{
+  "name": "mawadda-commercial",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": "^22.12 || >=24" },
+  "scripts": {
+    "postinstall": "prisma generate",
+    "dev": "npm run build && tsx server/index.ts --demo",
+    "dev:android": "npm run dev -- --android",
+    "start": "tsx server/index.ts",
+    "migrate": "prisma migrate deploy",
+    "test": "tsx --test server/*.test.ts",
+    "check": "tsc --noEmit",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.16",
+    "@electric-sql/pglite-socket": "^0.2.19",
+    "@prisma/adapter-pg": "~7.6.0",
+    "@prisma/client": "~7.6.0",
+    "@supabase/supabase-js": "~2.100.0",
+    "express": "^5.2.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "tsx": "^4.21.0",
+    "zod": "^4.3.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.1.0",
+    "prisma": "~7.6.0",
+    "typescript": "~5.9.0",
+    "vite": "^7.3.0"
+  }
+}

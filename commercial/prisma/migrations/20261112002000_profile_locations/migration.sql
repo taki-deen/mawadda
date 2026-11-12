@@ -1,0 +1,3 @@
+ALTER TABLE "Account"
+  ADD COLUMN "countryCode" TEXT NOT NULL DEFAULT '',
+  ADD COLUMN "cityId" TEXT;
