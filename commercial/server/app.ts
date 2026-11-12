@@ -5,7 +5,7 @@ import { demoAdminEmail, demoOwnerEmail, isAnswered, type AccountProfile, type C
 import { makeAuth, type Identity } from './auth';
 import { digest } from './catalog';
 import { cityOptions, countryName, countryOptions, findCity } from './locations';
-import { personalDetailsSchema, shareAccountFields, shareableValues } from './personalProfiles';
+import { personalDetailsInputSchema, personalDetailsSchema, shareAccountFields, shareableValues } from './personalProfiles';
 import { sharedProfileKeys, type PersonalDetails, type SessionProfile, type SharedProfileKey } from '../src/personalProfile';
 import type { CustomField } from '../src/adminTypes';
 import { adminContentView, adminStats, contentState, customValuesSchema, publishDraft, publishSchema, saveDraft, saveDraftSchema,
@@ -31,7 +31,7 @@ const locationFields = { ...profileBasics, location: z.strictObject({ countryCod
   cityId: z.string().regex(/^\d{1,10}$/).nullable() }).optional() };
 const profileSchema = z.union([oldProfileSchema, z.strictObject(locationFields)]);
 const selfProfileSchema = z.union([oldProfileSchema, z.strictObject({ ...locationFields,
-  personalDetails: personalDetailsSchema.optional(), customValues: customValuesSchema.optional(),
+  personalDetails: personalDetailsInputSchema.optional(), customValues: customValuesSchema.optional(),
   customFieldsVersion: z.string().regex(/^[a-f0-9]{64}$/).optional() })]);
 const profileShareSchema = z.strictObject({ profileRevision: revision,
   fieldsVersion: z.string().regex(/^[a-f0-9]{64}$/).optional(),

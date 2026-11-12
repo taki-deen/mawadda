@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { currencies, personalLimits, personalValues, profileOptions, type ProfileValue } from '../src/personalProfile';
+import { currencies, earliestBirthDate, latestBirthDate, personalLimits, personalValues, profileOptions, type ProfileValue } from '../src/personalProfile';
 import type { CustomField } from '../src/adminTypes';
 import { visibleCustomValues } from './adminContent';
 import { engagementLabels, type Engagement } from '../src/types';
@@ -11,6 +11,8 @@ const weightNumber = z.number().min(weight.min).max(weight.max);
 const incomeNumber = z.number().min(income.min).max(income.max);
 
 export const personalDetailsSchema = z.strictObject({
+  gender: z.enum(['male', 'female']).optional(),
+  birthDate: z.iso.date().refine(value => value >= earliestBirthDate).optional(),
   age: z.number().int().min(age.min).max(age.max).optional(),
   ageView: z.enum(['exact', 'range']).optional(),
   heightCm: z.number().min(height.min).max(height.max).optional(),
@@ -31,6 +33,10 @@ export const personalDetailsSchema = z.strictObject({
   incomeStability: z.enum(profileOptions.incomeStability).optional(),
   commitments: z.enum(profileOptions.commitments).optional(),
   housing: z.enum(profileOptions.housing).optional(),
+}).refine(details => details.birthDate === undefined || details.age === undefined);
+
+export const personalDetailsInputSchema = personalDetailsSchema.refine(details => !details.birthDate || details.birthDate <= latestBirthDate(), {
+  path: ['birthDate'], message: 'العمر لازم يكون 18 سنة على الأقل.',
 });
 
 export const shareAccountFields = {

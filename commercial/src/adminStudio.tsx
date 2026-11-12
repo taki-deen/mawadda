@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import type { AdminStats, ContentDraft, ContentView, CustomField } from './adminTypes';
 import type { ProfileApi } from './androidProfiles';
+import { CustomProfileField } from './profileInputs';
 import { manualOnlyQuestionIds, type Question } from './types';
 
 type Run = (work: () => Promise<void>) => void;
@@ -201,10 +202,9 @@ export function AdminStudio({ api, busy, run, onMessage }: { api: ProfileApi; bu
             <button type="button" className="plain" disabled={Boolean(fieldEdit)} onClick={() => setFields(draft.fields.filter(item => item.id !== field.id))}>إزالة من المسودة</button>
           </div>
         </li>)}</ul>
-        {draft.fields.length > 0 && <details className="studio-preview"><summary>معاينة الحقول قبل النشر</summary>{draft.fields.map(field => <label key={field.id}>
-          {field.label}{field.kind === 'choice' ? <select><option>اختياري</option>{field.options.map((option, index) => <option key={index}>{option}</option>)}</select>
-            : <input type={field.kind} placeholder="اختياري" />}
-        </label>)}</details>}
+        {draft.fields.length > 0 && <details className="studio-preview"><summary>معاينة الحقول قبل النشر</summary>
+          <div className="personal-fields">{draft.fields.map(field => <CustomProfileField key={field.id} field={field} />)}</div>
+        </details>}
       </section>}
     </>}
     {tab === 'history' && content && <section className="card"><h2>سجل تغييرات المحتوى</h2>

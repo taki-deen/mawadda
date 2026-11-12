@@ -5,11 +5,14 @@ export const profileOptions = {
   incomeStability: ['ثابت', 'متغيّر'],
   commitments: ['عندي التزامات شهرية', 'ما عندي التزامات شهرية', 'أفضل مناقشته لاحقًا'],
   housing: ['ملك', 'إيجار', 'مع الأهل', 'أخرى'],
-  eyeColor: ['بنّي', 'عسلي', 'أخضر', 'أزرق', 'رمادي', 'أخرى'],
+  eyeColor: ['بنّي داكن', 'بنّي', 'عسلي', 'كهرماني', 'أخضر داكن', 'أخضر', 'رمادي مائل للأخضر',
+    'أزرق', 'رمادي مائل للأزرق', 'رمادي', 'أخرى'],
   hairColor: ['أسود', 'بنّي', 'أشقر', 'أحمر', 'رمادي', 'أبيض', 'أخرى'],
 } as const;
 
-export const skinTones = ['فاتحة', 'قمحية', 'سمراء', 'داكنة'] as const;
+export const skinTones = ['فاتحة جدًا', 'فاتحة', 'زيتونية فاتحة', 'قمحية', 'سمراء ذهبية', 'سمراء', 'داكنة', 'داكنة جدًا'] as const;
+export const profileGenderLabels = { male: 'ذكر', female: 'أنثى' } as const;
+export type ProfileGender = keyof typeof profileGenderLabels;
 
 export const personalLimits = {
   age: { min: 18, max: 120 }, height: { min: 1, max: 300 }, weight: { min: 1, max: 700 },
@@ -18,7 +21,7 @@ export const personalLimits = {
 
 type Choices = { [Key in keyof typeof profileOptions]?: typeof profileOptions[Key][number] };
 export type PersonalDetails = Choices & {
-  age?: number; ageView?: 'exact' | 'range'; heightCm?: number;
+  gender?: ProfileGender; birthDate?: string; age?: number; ageView?: 'exact' | 'range'; heightCm?: number;
   weight?: { mode: 'exact'; kg: number } | { mode: 'range'; min: number; max: number };
   skinTone?: string; children?: number; jobField?: string;
   income?: { currency: string; min: number; max: number };
@@ -55,18 +58,33 @@ export function currencyName(code: string) {
   return currencyNames?.of(code) ?? code;
 }
 
+export const earliestBirthDate = '1900-01-01';
+
+export function latestBirthDate(today = new Date()) {
+  const year = today.getUTCFullYear() - personalLimits.age.min;
+  const month = today.getUTCMonth();
+  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(year, month, Math.min(today.getUTCDate(), daysInMonth))).toISOString().slice(0, 10);
+}
+
+export function ageFromBirthDate(birthDate: string, today = new Date()) {
+  const hadBirthday = today.toISOString().slice(5, 10) >= birthDate.slice(5);
+  return today.getUTCFullYear() - Number(birthDate.slice(0, 4)) - Number(!hadBirthday);
+}
+
 export function personalValues(details: PersonalDetails, sharing = false): ProfileValue[] {
-  const { age, heightCm, weight, income } = details;
+  const { birthDate, age: savedAge, heightCm, weight, income, ...otherFields } = details;
+  const age = birthDate ? ageFromBirthDate(birthDate) : savedAge;
   let ageLabel = '';
   if (age !== undefined) {
     const base = Math.floor(age / 5) * 5;
     ageLabel = sharing && details.ageView !== 'exact'
-      ? `${Math.max(base, personalLimits.age.min)}–${Math.min(base + 4, personalLimits.age.max)} سنة`
+      ? `${Math.max(base, personalLimits.age.min)}–${base + 4} سنة`
       : `${age} سنة`;
   }
   const weightLabel = weight?.mode === 'exact' ? `${weight.kg} كغ` : weight ? `${weight.min}–${weight.max} كغ` : '';
   const values: Partial<Record<BuiltInProfileKey, string>> = {
-    ...details,
+    ...otherFields,
     age: ageLabel,
     heightCm: heightCm === undefined ? '' : `${heightCm} سم`,
     weight: weightLabel,

@@ -1,22 +1,30 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import type { AddressInfo } from 'node:net';
 import { PGlite } from '@electric-sql/pglite';
 import { demoAdminEmail, demoOwnerEmail, demoPeople, type AccountProfile, type CityOption, type CountryOption, type SessionView } from '../src/types';
-import type { SessionProfile } from '../src/personalProfile';
+import { ageFromBirthDate, latestBirthDate, type SessionProfile } from '../src/personalProfile';
 import type { AdminStats, ContentView } from '../src/adminTypes';
 import { createApp } from './app';
 import { ensureQuestionnaire } from './catalog';
 import { connectDatabase } from './database';
 
+test('age changes on the birthday and handles leap-day dates', () => {
+  assert.equal(ageFromBirthDate('2008-02-29', new Date('2026-02-28T12:00:00Z')), 17);
+  assert.equal(ageFromBirthDate('2008-02-29', new Date('2026-03-01T12:00:00Z')), 18);
+  assert.equal(latestBirthDate(new Date('2028-02-29T12:00:00Z')), '2010-02-28');
+});
+
 test('two-party pilot keeps answers private and enforces versioned consent and review', async t => {
+  // This in-memory demo uses synthetic accounts, profiles, and questionnaire answers.
   const connection = await connectDatabase();
   const questionnaire = await ensureQuestionnaire(connection.db);
   const catalog = await connection.db.questionnaire.findUniqueOrThrow({ where: { id: questionnaire } });
   assert.equal((catalog.content as { questions: unknown[] }).questions.length, 150);
-  const ownerPassword = 'local-owner-test-fixture';
+  const ownerPassword = randomUUID();
   const server = createApp(connection.db, questionnaire, { demo: true }, undefined, undefined, [], [], ownerPassword).listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(async () => {
@@ -39,7 +47,7 @@ test('two-party pilot keeps answers private and enforces versioned consent and r
   const [one, two, stranger] = await Promise.all(demoPeople.map(async person =>
     (await call<{ token: string }>('/dev/sign-in', '', 'POST', { email: person.email })).token));
 
-  const signup = { email: 'android-profile@example.test', password: 'demo-fixture-only', register: true };
+  const signup = { email: 'android-profile@example.test', password: randomUUID(), register: true };
   const registered = (await call<{ token: string }>('/dev/password', '', 'POST', signup)).token;
   await call('/dev/password', '', 'POST', { ...signup, email: demoAdminEmail }, 409);
   await call('/dev/password', '', 'POST', signup, 409);
@@ -98,7 +106,7 @@ test('two-party pilot keeps answers private and enforces versioned consent and r
   const firstAccount = await call<AccountProfile>('/account', one);
   const personalEdit = { displayName: 'ملف خاص للتجربة', engagement: 'fiance', profileRevision: firstAccount.profileRevision };
   const personalDetails = {
-    age: 27, heightCm: 172, weight: { mode: 'range', min: 70, max: 79 }, skinTone: 'قمحية',
+    age: 27, heightCm: 172, weight: { mode: 'range', min: 70, max: 79 }, skinTone: 'قمحية', eyeColor: 'أزرق',
     income: { currency: 'AED', min: 8000, max: 10000 },
   };
   await call('/account', one, 'PUT', { ...personalEdit, personalDetails: { ...personalDetails, income: { currency: 'AED', min: 10, max: 5 } } }, 400);
@@ -123,11 +131,23 @@ test('two-party pilot keeps answers private and enforces versioned consent and r
   await call(profileShare, one, 'PUT', shareAge);
   assert.deepEqual((await call<SessionProfile>(profileShare, two)).partner, [{ key: 'age', value: '25–29 سنة' }]);
   await call(profileShare, stranger, 'GET', undefined, 404);
+  const { age, ...otherDetails } = personalDetails;
+  const birthDate = `${new Date().getUTCFullYear() - age}-01-01`;
+  for (const invalid of ['2024-02-30', new Date().toISOString().slice(0, 10)]) {
+    await call('/account', one, 'PUT', { ...personalEdit, profileRevision: withDetails.profileRevision,
+      personalDetails: { ...otherDetails, birthDate: invalid } }, 400);
+  }
+  await call('/account', one, 'PUT', { ...personalEdit, profileRevision: withDetails.profileRevision,
+    personalDetails: { ...otherDetails, gender: 'invalid' } }, 400);
+  const updatedDetails = { ...otherDetails, birthDate, ageView: 'exact', gender: 'male', eyeColor: 'كهرماني', skinTone: 'زيتونية فاتحة' };
   const newDetails = await call<AccountProfile>('/account', one, 'PUT', {
-    ...personalEdit, profileRevision: withDetails.profileRevision, personalDetails: { ...personalDetails, ageView: 'exact' },
+    ...personalEdit, profileRevision: withDetails.profileRevision, personalDetails: updatedDetails,
   });
+  assert.deepEqual(newDetails.personalDetails, updatedDetails);
   assert.deepEqual((await call<SessionProfile>(profileShare, two)).partner, []);
   await call(profileShare, one, 'PUT', shareAge, 409);
+  await call(profileShare, one, 'PUT', { profileRevision: newDetails.profileRevision, fields: ['birthDate'] }, 400);
+  await call(profileShare, one, 'PUT', { profileRevision: newDetails.profileRevision, fields: ['gender'] }, 400);
   await call(profileShare, one, 'PUT', { ...shareAge, profileRevision: newDetails.profileRevision });
   assert.deepEqual((await call<SessionProfile>(profileShare, two)).partner, [{ key: 'age', value: '27 سنة' }]);
   await call(profileShare, one, 'PUT', { ...shareAge, fields: [] });
