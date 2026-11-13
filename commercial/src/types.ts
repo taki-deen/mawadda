@@ -33,7 +33,7 @@ export type SessionView = SessionSummary & {
   report: { scored: number; paired: number; approved: number; score: number | null } | null;
 };
 
-export type Config = { demo: true } | { demo: false; authUrl: string; authKey: string };
+export type Config = { demo: true } | { demo: false; authUrl: string; authKey: string; turnstileSiteKey?: string };
 export const engagementLabels = {
   undisclosed: 'أفضل عدم الإفصاح', not_engaged: 'غير مرتبط', fiance: 'خاطب', fiancee: 'مخطوبة',
 } as const;

@@ -22,6 +22,16 @@ model Account {
   memberships     Member[]
 }
 
+model CategoryAccess {
+  accountKey      String
+  questionnaireId String
+  category        Int
+  expiresAt       DateTime
+
+  @@id([accountKey, questionnaireId, category])
+  @@index([expiresAt])
+}
+
 model Questionnaire {
   id       String    @id
   content  Json

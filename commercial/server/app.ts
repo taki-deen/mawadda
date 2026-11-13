@@ -5,13 +5,14 @@ import { demoAdminEmail, demoOwnerEmail, isAnswered, type AccountProfile, type C
 import { makeAuth, type Identity } from './auth';
 import { digest } from './catalog';
 import { cityOptions, countryName, countryOptions, findCity } from './locations';
-import { personalDetailsSchema, shareAccountFields, shareableValues } from './personalProfiles';
+import { personalDetailsInputSchema, personalDetailsSchema, shareAccountFields, shareableValues } from './personalProfiles';
 import { sharedProfileKeys, type PersonalDetails, type SessionProfile, type SharedProfileKey } from '../src/personalProfile';
 import type { CustomField } from '../src/adminTypes';
 import { adminContentView, adminStats, contentState, customValuesSchema, publishDraft, publishSchema, saveDraft, saveDraftSchema,
   updateCustomValues, visibleCustomValues } from './adminContent';
 import { HttpError, categoryQuestions, lockSession, memberSession, questionnaireFor, requireRule, sessionInclude, sharedState, summarize, viewSession, withAccount } from './domain';
 import type { Prisma, PrismaClient } from './generated/client';
+import { categoryQuota, categoryWindow, createRateLimits, RateLimitError, retryAfter } from './rateLimits';
 
 const email = z.email().max(254).transform(value => value.toLowerCase());
 const alias = z.string().trim().min(1).max(60);
@@ -31,16 +32,19 @@ const locationFields = { ...profileBasics, location: z.strictObject({ countryCod
   cityId: z.string().regex(/^\d{1,10}$/).nullable() }).optional() };
 const profileSchema = z.union([oldProfileSchema, z.strictObject(locationFields)]);
 const selfProfileSchema = z.union([oldProfileSchema, z.strictObject({ ...locationFields,
-  personalDetails: personalDetailsSchema.optional(), customValues: customValuesSchema.optional(),
+  personalDetails: personalDetailsInputSchema.optional(), customValues: customValuesSchema.optional(),
   customFieldsVersion: z.string().regex(/^[a-f0-9]{64}$/).optional() })]);
 const profileShareSchema = z.strictObject({ profileRevision: revision,
   fieldsVersion: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   fields: z.array(z.union([z.enum(sharedProfileKeys), z.templateLiteral(['custom:', z.uuid()])])).max(sharedProfileKeys.length + 40) });
 
 export function createApp(db: PrismaClient, _questionnaireId: string, config: Config, buildDir?: string, appOrigin?: string,
-  managedAdmins: readonly string[] = [], managedOwners: readonly string[] = [], demoOwnerPassword?: string) {
+  managedAdmins: readonly string[] = [], managedOwners: readonly string[] = [], demoOwnerPassword?: string,
+  security: { cloudflareTunnel?: boolean; now?: () => number } = {}) {
   const app = express();
   const auth = makeAuth(config, demoOwnerPassword);
+  const now = security.now ?? Date.now;
+  const rates = createRateLimits(now, !config.demo && security.cloudflareTunnel);
   const owners = new Set(config.demo ? (demoOwnerPassword ? [`demo:${demoOwnerEmail}`] : []) : managedOwners.map(id => `supabase:${id}`));
   const admins = new Set(config.demo ? [`demo:${demoAdminEmail}`] : managedAdmins.map(id => `supabase:${id}`));
   for (const owner of owners) admins.add(owner);
@@ -52,7 +56,8 @@ export function createApp(db: PrismaClient, _questionnaireId: string, config: Co
   app.use((req, res, next) => {
     res.set({ 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer' });
     const connect = config.demo ? '' : ` ${new URL(config.authUrl).origin}`;
-    res.set('Content-Security-Policy', `default-src 'self'; connect-src 'self'${connect}; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
+    const challenge = !config.demo && config.turnstileSiteKey ? ' https://challenges.cloudflare.com' : '';
+    res.set('Content-Security-Policy', `default-src 'self'; connect-src 'self'${connect}; script-src 'self'${challenge}; frame-src 'self'${challenge}; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
     const loopback = /^(127\.0\.0\.1|localhost)(:\d+)?$/.test(req.get('host') ?? '');
     requireRule(!config.demo || loopback, 403, 'التجربة المحلية متاحة على هذا الجهاز فقط.');
     const origin = req.get('origin');
@@ -61,7 +66,12 @@ export function createApp(db: PrismaClient, _questionnaireId: string, config: Co
     next();
   });
   app.use('/api', (_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
-  app.use('/api/admin/content', express.json({ limit: '2mb' }));
+  app.use('/api', rates.byIp);
+  app.use('/api/admin/content', async (req, res, next) => {
+    const identity = await authenticate(req, res);
+    requireRule(admins.has(identity.id), 403, 'هذه الصفحة للأدمن.');
+    next();
+  }, express.json({ limit: '2mb' }));
   app.use('/api', express.json({ limit: '24kb' }));
   app.get('/api/config', (_req, res) => { res.json(config); });
   app.get('/api/locations/countries', (_req, res) => { res.json(countryOptions()); });
@@ -78,9 +88,17 @@ export function createApp(db: PrismaClient, _questionnaireId: string, config: Co
     return match[1];
   }
 
+  async function authenticate(req: Request, res: Response): Promise<Identity> {
+    if (res.locals.identity) return res.locals.identity as Identity;
+    const identity = await auth.verify(token(req));
+    rates.byAccount(req, identity.id);
+    res.locals.identity = identity;
+    return identity;
+  }
+
   const route = (handler: (req: Request, tx: Prisma.TransactionClient, identity: Identity) => Promise<unknown>) =>
     async (req: Request, res: Response) => {
-      const identity = await auth.verify(token(req));
+      const identity = await authenticate(req, res);
       res.json(await withAccount(db, identity.id, tx => handler(req, tx, identity)));
     };
 
@@ -189,7 +207,7 @@ export function createApp(db: PrismaClient, _questionnaireId: string, config: Co
   }));
 
   app.get('/api/me', async (req, res) => {
-    const identity = await auth.verify(token(req));
+    const identity = await authenticate(req, res);
     const sessions = await db.session.findMany({ where: { members: { some: { accountId: identity.id } } },
       orderBy: { createdAt: 'desc' }, include: sessionInclude });
     res.json({ email: identity.email, sessions: sessions.map(session => summarize(session, identity.id)) });
@@ -228,8 +246,24 @@ export function createApp(db: PrismaClient, _questionnaireId: string, config: Co
     return { id: invitation.sessionId };
   }));
 
-  app.get('/api/sessions/:id', sessionRoute(async (req, tx, { session, member, partner }) =>
-    viewSession(tx, session, categoryQuery.parse(req.query.category), member, partner)));
+  app.get('/api/sessions/:id', sessionRoute(async (req, tx, { session, member, partner }) => {
+    const category = categoryQuery.parse(req.query.category);
+    if (!admins.has(member.accountId)) {
+      // withAccount holds the account lock across requests, including across server instances.
+      const time = now();
+      const accountKey = digest(member.accountId);
+      const active = await tx.categoryAccess.findMany({ where: { accountKey, expiresAt: { gt: new Date(time) } }, orderBy: { expiresAt: 'asc' } });
+      if (!active.some(entry => entry.questionnaireId === session.questionnaireId && entry.category === category)) {
+        if (active.length >= categoryQuota) {
+          throw new RateLimitError(retryAfter(active[0].expiresAt.getTime(), time), 'فتحت محاور كثيرة خلال فترة قصيرة. انتظر شوي قبل فتح محور جديد.');
+        }
+        await tx.categoryAccess.deleteMany({ where: { accountKey, expiresAt: { lte: new Date(time) } } });
+        await tx.categoryAccess.create({ data: { accountKey, questionnaireId: session.questionnaireId,
+          category, expiresAt: new Date(time + categoryWindow) } });
+      }
+    }
+    return viewSession(tx, session, category, member, partner);
+  }));
 
   async function readProfileShare(tx: Prisma.TransactionClient, { session, member, partner }: Awaited<ReturnType<typeof memberSession>>,
     fields: CustomField[], fieldsVersion: string): Promise<SessionProfile> {
@@ -371,6 +405,11 @@ export function createApp(db: PrismaClient, _questionnaireId: string, config: Co
     app.use(express.static(buildDir));
   }
   const onError: ErrorRequestHandler = (error, _req, res, _next) => {
+    if (error instanceof RateLimitError) {
+      res.set('Retry-After', String(error.retryAfter));
+      res.status(429).json({ error: error.message });
+      return;
+    }
     if (error instanceof HttpError) { res.status(error.status).json({ error: error.message }); return; }
     if (error instanceof z.ZodError || error.status === 400 || error.status === 413) {
       res.status(error.status === 413 ? 413 : 400).json({ error: 'راجع الحقول وحجم النص ثم حاول مجددًا.' });

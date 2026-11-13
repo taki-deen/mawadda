@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { currencies, currencyName, personalLimits, profileLabels, profileFieldLabel, profileOptions, skinTones,
-  type PersonalDetails, type ProfileValue, type SessionProfile, type SharedProfileKey } from './personalProfile';
+import { ageFromBirthDate, currencies, currencyName, earliestBirthDate, latestBirthDate, personalLimits, profileLabels, profileFieldLabel, profileOptions, profileGenderLabels,
+  type PersonalDetails, type ProfileGender, type ProfileValue, type SessionProfile, type SharedProfileKey } from './personalProfile';
 import type { ProfileApi } from './androidProfiles';
+import { HeightField, WeightFields } from './profileMeasurements';
+import { optionalChoices, ProfileChoices, ProfileLookup, ProfileNumberField, ProfileTextField } from './profileInputs';
+import { AppearanceFields } from './profileAppearance';
 
 type ChoiceKey = keyof typeof profileOptions;
 
@@ -12,13 +15,17 @@ export function readPersonalDetails(fields: FormData): PersonalDetails {
     return value === undefined ? undefined : Number(value);
   };
   const choice = <Key extends ChoiceKey>(name: Key) => text(name) as PersonalDetails[Key];
-  const age = number('age');
+  const birthDate = text('birthDate');
+  const age = birthDate ? undefined : number('age');
   const weightMode = text('weightMode');
+  const weightKg = number('weightKg');
   const currency = text('incomeCurrency');
+  const gender = text('gender');
   return {
-    age, ageView: age === undefined ? undefined : text('ageView') === 'exact' ? 'exact' : 'range',
+    gender: gender === 'male' || gender === 'female' ? gender : undefined,
+    birthDate, age, ageView: birthDate || age !== undefined ? (text('ageView') === 'exact' ? 'exact' : 'range') : undefined,
     heightCm: number('heightCm'),
-    weight: weightMode === 'exact' ? { mode: 'exact', kg: number('weightKg')! }
+    weight: weightMode === 'exact' && weightKg !== undefined ? { mode: 'exact', kg: weightKg }
       : weightMode === 'range' ? { mode: 'range', min: number('weightMin')!, max: number('weightMax')! } : undefined,
     skinTone: text('skinTone') === 'custom' ? text('skinToneCustom') : text('skinTone'),
     eyeColor: choice('eyeColor'), hairColor: choice('hairColor'),
@@ -29,83 +36,94 @@ export function readPersonalDetails(fields: FormData): PersonalDetails {
   };
 }
 
-function NumberField({ label, name, value, limits, step = '1', required = false }: {
-  label: string; name: string; value?: number; limits: { min: number; max: number }; step?: string; required?: boolean;
-}) {
-  return <label>{label}<input type="number" name={name} defaultValue={value} min={limits.min} max={limits.max}
-    step={step} required={required} placeholder={required ? undefined : 'اختياري'} /></label>;
+function ProfileChoice({ name, value }: { name: ChoiceKey; value?: string }) {
+  return <ProfileChoices name={name} label={profileLabels[name]} initialValue={value}
+    options={optionalChoices(profileOptions[name])} />;
 }
 
-function ProfileChoice({ name, value }: { name: ChoiceKey; value?: string }) {
-  return <label>{profileLabels[name]}<select name={name} defaultValue={value ?? ''}>
-    <option value="">أفضل عدم الإفصاح</option>
-    {profileOptions[name].map(option => <option key={option}>{option}</option>)}
-  </select></label>;
+function AgeFields({ details }: { details: PersonalDetails }) {
+  const [birthDate, setBirthDate] = useState(details.birthDate ?? '');
+  const [keepSavedAge, setKeepSavedAge] = useState(true);
+  const latest = latestBirthDate();
+  const savedAge = keepSavedAge ? details.age : undefined;
+  const validDate = birthDate >= earliestBirthDate && birthDate <= latest;
+  const age = birthDate ? (validDate ? ageFromBirthDate(birthDate) : undefined) : savedAge;
+
+  return <div className="profile-age">
+    <label>تاريخ الميلاد (اختياري)
+      <input type="date" name="birthDate" autoComplete="bday" dir="ltr" min={earliestBirthDate} max={latest}
+        value={birthDate} onInput={event => setBirthDate(event.currentTarget.value)} onChange={event => setBirthDate(event.target.value)} />
+    </label>
+    <output className="profile-age-result" aria-live="polite">
+      {age === undefined ? (birthDate ? 'اختَر تاريخ ميلاد صالحًا لعمر 18 سنة فأكثر.' : 'العمر بيظهر هون بعد اختيار تاريخ الميلاد.')
+        : `${birthDate ? 'عمرك' : 'عمرك المحفوظ'} ${age} سنة`}
+    </output>
+    {birthDate && <button type="button" className="plain" onClick={() => setBirthDate('')}>مسح تاريخ الميلاد</button>}
+    {!birthDate && savedAge !== undefined && <>
+      <input type="hidden" name="age" value={savedAge} />
+      <button type="button" className="plain" onClick={() => setKeepSavedAge(false)}>مسح العمر المحفوظ</button>
+    </>}
+    <ProfileChoices label="طريقة عرض العمر عند المشاركة" name="ageView" initialValue={details.ageView ?? 'range'} options={[
+      { value: 'range', label: 'فئة عمرية' }, { value: 'exact', label: 'العمر بالسنوات' },
+    ]} />
+    <p className="muted small">تاريخ الميلاد بيظهر إلك وحدك.</p>
+  </div>;
+}
+
+function IncomeFields({ income }: { income: PersonalDetails['income'] }) {
+  const [mode, setMode] = useState(income ? 'range' : '');
+  const [currency, setCurrency] = useState(income?.currency ?? '');
+  const codes = income && !currencies.includes(income.currency) ? [...currencies, income.currency] : currencies;
+  return <>
+    <ProfileChoices name="incomeMode" label="نطاق الدخل الشهري" value={mode} onChange={setMode} options={[
+      { value: 'range', label: 'إدخال نطاق' }, { value: '', label: 'أفضل مناقشته لاحقًا' },
+    ]} />
+    <fieldset className="profile-income-range" hidden={!mode} disabled={!mode}>
+      <ProfileLookup name="incomeCurrency" label="العملة" searchLabel="بحث عن عملة" placeholder="اسم العملة أو رمزها" emptyLabel="اختر العملة"
+        value={currency} options={codes.map(code => ({ value: code, label: `${currencyName(code)} (${code})` }))} onSelect={setCurrency} required />
+      <ProfileNumberField label="الدخل من" name="incomeMin" value={income?.min} {...personalLimits.income} increment={100} required />
+      <ProfileNumberField label="الدخل إلى" name="incomeMax" value={income?.max} {...personalLimits.income} increment={100} required />
+    </fieldset>
+  </>;
 }
 
 export function PersonalFields({ details }: { details: PersonalDetails }) {
-  const [weightMode, setWeightMode] = useState(details.weight?.mode ?? '');
-  const [skinTone, setSkinTone] = useState(details.skinTone && !skinTones.some(tone => tone === details.skinTone)
-    ? 'custom' : details.skinTone ?? '');
-  const [showIncome, setShowIncome] = useState(Boolean(details.income));
-  const currencyChoices = details.income && !currencies.includes(details.income.currency)
-    ? [...currencies, details.income.currency] : currencies;
+  const [gender, setGender] = useState<ProfileGender | ''>(details.gender ?? '');
 
   return <>
-    <fieldset className="personal-group">
-      <legend>معلومات شخصية</legend>
+    <details className="profile-section">
+      <summary>معلومات شخصية</summary>
       <div className="personal-fields">
-        <NumberField label="العمر بالسنوات" name="age" value={details.age} limits={personalLimits.age} />
-        <label>طريقة عرض العمر عند المشاركة<select name="ageView" defaultValue={details.ageView ?? 'range'}>
-          <option value="range">فئة عمرية</option><option value="exact">العمر بالسنوات</option>
-        </select></label>
+        <AgeFields details={details} />
         <ProfileChoice name="socialStatus" value={details.socialStatus} />
-        <NumberField label="عدد الأبناء" name="children" value={details.children} limits={personalLimits.children} />
+        <ProfileNumberField label="عدد الأبناء" name="children" value={details.children} {...personalLimits.children} integer />
         <ProfileChoice name="education" value={details.education} />
         <ProfileChoice name="jobStatus" value={details.jobStatus} />
-        <label>مجال العمل<input name="jobField" defaultValue={details.jobField} maxLength={80} placeholder="اختياري" /></label>
+        <ProfileTextField label="مجال العمل" name="jobField" value={details.jobField} maxLength={80} />
         <ProfileChoice name="housing" value={details.housing} />
       </div>
-    </fieldset>
-    <fieldset className="personal-group">
-      <legend>المظهر</legend>
+    </details>
+    <details className="profile-section">
+      <summary>المظهر</summary>
       <div className="personal-fields">
-        <NumberField label="الطول (سم)" name="heightCm" value={details.heightCm} limits={personalLimits.height} step="0.1" />
-        <label>الوزن (كغ)<select name="weightMode" value={weightMode} onChange={event => setWeightMode(event.target.value as typeof weightMode)}>
-          <option value="">أفضل عدم الإفصاح</option><option value="exact">رقم</option><option value="range">نطاق</option>
-        </select></label>
-        {weightMode === 'exact' && <NumberField label="الوزن بالرقم (كغ)" name="weightKg" value={details.weight?.mode === 'exact' ? details.weight.kg : undefined} limits={personalLimits.weight} step="0.1" required />}
-        {weightMode === 'range' && <>
-          <NumberField label="الوزن من (كغ)" name="weightMin" value={details.weight?.mode === 'range' ? details.weight.min : undefined} limits={personalLimits.weight} step="0.1" required />
-          <NumberField label="الوزن إلى (كغ)" name="weightMax" value={details.weight?.mode === 'range' ? details.weight.max : undefined} limits={personalLimits.weight} step="0.1" required />
-        </>}
-        <label>لون البشرة<select name="skinTone" value={skinTone} onChange={event => setSkinTone(event.target.value)}>
-          <option value="">أفضل عدم الإفصاح</option>{skinTones.map(tone => <option key={tone}>{tone}</option>)}
-          <option value="custom">أكتب وصفًا بنفسي</option>
-        </select></label>
-        {skinTone === 'custom' && <label>وصف لون البشرة<input name="skinToneCustom" maxLength={60} defaultValue={details.skinTone} required /></label>}
-        <ProfileChoice name="eyeColor" value={details.eyeColor} />
-        <ProfileChoice name="hairColor" value={details.hairColor} />
+        <ProfileChoices label="الجنس" name="gender" value={gender} onChange={value => setGender(value as ProfileGender | '')} options={[
+          ...Object.entries(profileGenderLabels).map(([value, label]) => ({ value, label })), { value: '', label: 'بدون اختيار' },
+        ]} />
+        <div className="profile-measurements">
+          <HeightField value={details.heightCm} gender={gender} />
+          <WeightFields weight={details.weight} />
+        </div>
+        <AppearanceFields details={details} gender={gender} />
       </div>
-    </fieldset>
-    <fieldset className="personal-group">
-      <legend>الوضع المالي</legend>
+    </details>
+    <details className="profile-section">
+      <summary>الوضع المالي</summary>
       <div className="personal-fields">
-        <label>نطاق الدخل الشهري<select value={showIncome ? 'range' : ''} onChange={event => setShowIncome(Boolean(event.target.value))}>
-          <option value="">أفضل مناقشته لاحقًا</option><option value="range">إدخال نطاق</option>
-        </select></label>
-        {showIncome && <>
-          <label>العملة<select name="incomeCurrency" required defaultValue={details.income?.currency ?? ''}>
-            <option value="">اختر العملة</option>
-            {currencyChoices.map(code => <option key={code} value={code}>{currencyName(code)} ({code})</option>)}
-          </select></label>
-          <NumberField label="الدخل من" name="incomeMin" value={details.income?.min} limits={personalLimits.income} step="0.01" required />
-          <NumberField label="الدخل إلى" name="incomeMax" value={details.income?.max} limits={personalLimits.income} step="0.01" required />
-        </>}
+        <IncomeFields income={details.income} />
         <ProfileChoice name="incomeStability" value={details.incomeStability} />
         <ProfileChoice name="commitments" value={details.commitments} />
       </div>
-    </fieldset>
+    </details>
   </>;
 }
 
@@ -138,7 +156,7 @@ export function SessionProfilePanel({ path, api, busy, run, onMessage }: {
   useEffect(() => {
     const refreshWhenVisible = () => { if (!document.hidden && !busy) void refresh(); };
     refreshWhenVisible();
-    const timer = window.setInterval(refreshWhenVisible, 5000);
+    const timer = window.setInterval(refreshWhenVisible, 15_000);
     document.addEventListener('visibilitychange', refreshWhenVisible);
     return () => {
       ++sequence.current;

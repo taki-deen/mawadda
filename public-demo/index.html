@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>مَوَدّة — تجربة قصيرة</title>
+  <link rel="stylesheet" href="demo.css">
+  <script src="demo.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="brand">مَوَدّة</p>
+      <h1>تجربة قصيرة للحوار قبل الزواج</h1>
+      <p>جرّبوا ثلاث أسئلة افتراضية. اختاروا إجابة لكل طرف، وبعدين افتحوا الحوار عن السبب وراء كل اختيار.</p>
+    </header>
+    <section aria-labelledby="question">
+      <p id="progress" class="muted" role="status"></p>
+      <h2 id="question" tabindex="-1"></h2>
+      <form id="demo">
+        <div id="answers"></div>
+        <div class="actions">
+          <button id="previous" class="secondary" type="button">السابق</button>
+          <button id="next" type="submit">التالي</button>
+        </div>
+      </form>
+    </section>
+    <section id="summary" hidden aria-labelledby="summary-title">
+      <h2 id="summary-title" tabindex="-1">نقاط للحوار</h2>
+      <ul id="discussion"></ul>
+      <button id="reset" type="button">جرّب من جديد</button>
+    </section>
+    <noscript>فعّل JavaScript لتجربة الأسئلة.</noscript>
+    <footer>اختياراتك بتبقى في هالصفحة أثناء التجربة وبتنمسح لما تسكّرها.</footer>
+  </main>
+</body>
+</html>
