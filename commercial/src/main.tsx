@@ -6,6 +6,8 @@ import { AdminUsers, MyAccount } from './androidProfiles';
 import { AdminStudio } from './adminStudio';
 import { JourneyHome, JourneySessions, JourneyStart } from './journey';
 import { SessionPage } from './sessionPage';
+import { ApiError, request } from './apiClient';
+import { TurnstileChallenge } from './turnstile';
 import './style.css';
 
 type Profile = { email: string; sessions: SessionSummary[] };
@@ -16,23 +18,6 @@ type Destination = 'home' | 'profile' | 'sessions' | 'new' | 'invite' | 'setting
 const localToken = 'mawadda-pilot-token';
 const androidEdition = /^\/android(?:\/|$)/.test(location.pathname);
 const inviteKey = 'mawadda-pilot-invite';
-
-class ApiError extends Error {
-  constructor(readonly status: number, message: string) { super(message); }
-}
-
-async function request<T>(path: string, token: string | null, method = 'GET', body?: unknown): Promise<T> {
-  const headers = new Headers({ Accept: 'application/json' });
-  if (token) headers.set('Authorization', `Bearer ${token}`);
-  if (body !== undefined) headers.set('Content-Type', 'application/json');
-  const response = await fetch(`/api${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), cache: 'no-store' });
-  if (!response.headers.get('content-type')?.includes('application/json')) {
-    throw new ApiError(response.status, 'تعذّر قراءة ردّ خادم مَوَدّة. تحقّق من عنوان الخادم وحاول مجددًا.');
-  }
-  const result = await response.json();
-  if (!response.ok) throw new ApiError(response.status, result.error || 'تعذّر إكمال الطلب.');
-  return result as T;
-}
 
 function readInvite() {
   const code = new URLSearchParams(location.hash.slice(1)).get('invite');
@@ -184,7 +169,7 @@ function App() {
           </> : config.demo ? <><p>اختَر حسابًا تجريبيًا. لتجربة الطرف الآخر، افتح رابط الدعوة في تبويب جديد وادخل بحساب مختلف.</p>
             <div className="demo-accounts">{demoPeople.map(person => <button className="button secondary" key={person.email} disabled={busy} onClick={() => demoSignIn(person.email)}>الدخول باسم {person.name}</button>)}</div>
             <p className="muted small">استخدم إجابات افتراضية. بيانات المعاينة مؤقتة وتُمسح عند إعادة تشغيل الخادم.</p></>
-            : provider && <Login provider={provider} run={run} busy={busy} onMessage={setMessage} />}
+            : provider && <Login provider={provider} siteKey={config.turnstileSiteKey} run={run} busy={busy} onMessage={setMessage} />}
         </div>
       </section>}
       {token && !profile && !error && <p role="status">جارٍ تحميل جلساتك…</p>}
@@ -232,23 +217,34 @@ function App() {
   </div>;
 }
 
-function Login({ provider, demoPassword, run, busy, onMessage }: {
+function Login({ provider, demoPassword, siteKey, run, busy, onMessage }: {
   provider?: SupabaseClient;
   demoPassword?: (input: { email: string; password: string }, register: boolean) => Promise<void>;
+  siteKey?: string;
   run: Run; busy: boolean; onMessage: (message: string) => void;
 }) {
   const [register, setRegister] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState('');
+  const [challengeVersion, setChallengeVersion] = useState(0);
+  const resetChallenge = () => { setCaptchaToken(''); setChallengeVersion(version => version + 1); };
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (siteKey && !captchaToken) return;
     const fields = new FormData(event.currentTarget);
     const input = { email: String(fields.get('email')).trim(), password: String(fields.get('password')) };
     run(async () => {
       if (demoPassword) { await demoPassword(input, register); return; }
       if (!provider) return;
-      const result = register ? await provider.auth.signUp({ ...input, options: { emailRedirectTo: location.origin + location.pathname } })
-        : await provider.auth.signInWithPassword(input);
-      if (result.error) throw new Error(register ? 'تعذّر إنشاء الحساب. تحقق من البريد وكلمة المرور.' : 'تعذّر الدخول. تحقق من البيانات وتأكيد البريد.');
-      if (register && !result.data.session) onMessage('افتح رسالة التأكيد في بريدك ثم سجّل الدخول.');
+      try {
+        const options = siteKey ? { captchaToken } : undefined;
+        const result = register ? await provider.auth.signUp({ ...input, options: { ...options, emailRedirectTo: location.origin + location.pathname } })
+          : await provider.auth.signInWithPassword({ ...input, options });
+        if (result.error?.status === 429) throw new Error('محاولات كثيرة. انتظر قليلًا قبل المحاولة.');
+        if (result.error) throw new Error(register ? 'تعذّر إنشاء الحساب. تحقق من البريد وكلمة المرور.' : 'تعذّر الدخول. تحقق من البيانات وتأكيد البريد.');
+        if (register && !result.data.session) onMessage('افتح رسالة التأكيد في بريدك ثم سجّل الدخول.');
+      } finally {
+        if (siteKey) resetChallenge();
+      }
     });
   }
   return <form onSubmit={submit}>
@@ -256,8 +252,9 @@ function Login({ provider, demoPassword, run, busy, onMessage }: {
     <label>كلمة المرور<input name="password" type="password" required minLength={register ? 8 : undefined} maxLength={128} autoComplete={register ? 'new-password' : 'current-password'} dir="ltr"
       aria-describedby={register ? 'signup-password-hint' : undefined} /></label>
     {register && <p id="signup-password-hint" className="muted small">استخدم 8 أحرف على الأقل.</p>}
-    <div className="actions"><button className="button" disabled={busy}>{register ? 'إنشاء حساب' : 'تسجيل الدخول'}</button>
-      <button className="plain" type="button" onClick={() => setRegister(!register)}>{register ? 'عندي حساب' : 'إنشاء حساب جديد'}</button></div>
+    {siteKey && <TurnstileChallenge key={challengeVersion} siteKey={siteKey} onToken={setCaptchaToken} />}
+    <div className="actions"><button className="button" disabled={busy || Boolean(siteKey && !captchaToken)}>{register ? 'إنشاء حساب' : 'تسجيل الدخول'}</button>
+      <button className="plain" type="button" disabled={busy} onClick={() => { setRegister(!register); if (siteKey) resetChallenge(); }}>{register ? 'عندي حساب' : 'إنشاء حساب جديد'}</button></div>
   </form>;
 }
 

@@ -156,7 +156,7 @@ export function SessionProfilePanel({ path, api, busy, run, onMessage }: {
   useEffect(() => {
     const refreshWhenVisible = () => { if (!document.hidden && !busy) void refresh(); };
     refreshWhenVisible();
-    const timer = window.setInterval(refreshWhenVisible, 5000);
+    const timer = window.setInterval(refreshWhenVisible, 15_000);
     document.addEventListener('visibilitychange', refreshWhenVisible);
     return () => {
       ++sequence.current;

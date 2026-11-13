@@ -5,12 +5,14 @@ import { createApp } from './app';
 import { ensureQuestionnaire } from './catalog';
 import { connectDatabase } from './database';
 import { seedAdminDemo } from './demoSeed';
+import { categoryWindow } from './rateLimits';
 import type { Config } from '../src/types';
 
 const demo = process.argv.includes('--demo');
 const androidDemo = demo && process.argv.includes('--android');
 if (existsSync('.env')) loadEnvFile();
-const { APP_ORIGIN, DATABASE_URL, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, MAWADDA_ADMIN_IDS, MAWADDA_OWNER_IDS, MAWADDA_DEMO_OWNER_PASSWORD } = process.env;
+const { APP_ORIGIN, DATABASE_URL, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, MAWADDA_ADMIN_IDS, MAWADDA_OWNER_IDS,
+  MAWADDA_DEMO_OWNER_PASSWORD, MAWADDA_TURNSTILE_SITE_KEY, MAWADDA_CLOUDFLARE_TUNNEL } = process.env;
 const port = androidDemo ? 3004 : Number(process.env.PORT || 3001);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid PORT');
 if (demo && process.env.NODE_ENV === 'production') throw new Error('Demo mode is local development only');
@@ -22,7 +24,11 @@ const appUrl = demo ? null : new URL(APP_ORIGIN!);
 if (appUrl && (appUrl.protocol !== 'https:' || authUrl?.protocol !== 'https:' || appUrl.origin !== APP_ORIGIN)) {
   throw new Error('Use HTTPS origins for managed mode');
 }
-const config: Config = demo ? { demo: true } : { demo: false, authUrl: authUrl!.origin, authKey: SUPABASE_PUBLISHABLE_KEY! };
+if (!demo && MAWADDA_TURNSTILE_SITE_KEY && !/^[A-Za-z0-9_-]{8,128}$/.test(MAWADDA_TURNSTILE_SITE_KEY)) {
+  throw new Error('Set MAWADDA_TURNSTILE_SITE_KEY to the public Turnstile site key');
+}
+const config: Config = demo ? { demo: true } : { demo: false, authUrl: authUrl!.origin, authKey: SUPABASE_PUBLISHABLE_KEY!,
+  turnstileSiteKey: MAWADDA_TURNSTILE_SITE_KEY || undefined };
 if (!config.demo && !config.authKey.startsWith('sb_publishable_')) throw new Error('Use a Supabase publishable key');
 const managedAdmins = (MAWADDA_ADMIN_IDS ?? '').split(',').map(id => id.trim().toLowerCase()).filter(Boolean);
 const managedOwners = (MAWADDA_OWNER_IDS ?? '').split(',').map(id => id.trim().toLowerCase()).filter(Boolean);
@@ -38,10 +44,20 @@ if (!existsSync(`${build}index.html`)) throw new Error('Run npm run build first'
 const connection = await connectDatabase(demo ? undefined : DATABASE_URL);
 const questionnaire = await ensureQuestionnaire(connection.db);
 if (demo && MAWADDA_DEMO_OWNER_PASSWORD) await seedAdminDemo(connection.db, questionnaire);
-const server = createApp(connection.db, questionnaire, config, build, appUrl?.origin, managedAdmins, managedOwners, MAWADDA_DEMO_OWNER_PASSWORD).listen(port, '127.0.0.1', () => {
+const server = createApp(connection.db, questionnaire, config, build, appUrl?.origin, managedAdmins, managedOwners,
+  MAWADDA_DEMO_OWNER_PASSWORD, { cloudflareTunnel: MAWADDA_CLOUDFLARE_TUNNEL === '1' }).listen(port, '127.0.0.1', () => {
   console.log(`Mawadda ${demo ? 'pilot demo' : 'pilot'}: http://127.0.0.1:${port}/${androidDemo ? 'android/' : ''}`);
 });
+server.headersTimeout = 15_000;
+server.requestTimeout = 30_000;
+const clearExpiredAccess = () => {
+  void connection.db.categoryAccess.deleteMany({ where: { expiresAt: { lte: new Date() } } })
+    .catch(() => console.error('Could not clear expired category limits'));
+};
+clearExpiredAccess();
+const cleanup = setInterval(clearExpiredAccess, categoryWindow);
+cleanup.unref();
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.once(signal, () => { server.close(() => { void connection.close(); }); });
+  process.once(signal, () => { clearInterval(cleanup); server.close(() => { void connection.close(); }); });
 }

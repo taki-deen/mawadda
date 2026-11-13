@@ -51,6 +51,8 @@ main.container { padding-block: clamp(1.75rem, 5vw, 4rem); flex: 1; }
 .card { min-width: 0; background: var(--cream); border: 1px solid var(--line); border-radius: 22px; padding: clamp(1.1rem, 3vw, 2rem); box-shadow: 0 12px 34px #26342d08; }
 .entry-card { align-content: center; }
 .entry-card > p:last-child { margin: 1rem 0 0; }
+.auth-challenge { margin-block: .85rem; }
+.auth-challenge p { margin-block: .4rem; }
 .demo-accounts { display: grid; gap: .58rem; }
 .demo-accounts .button { text-align: start; }
 .demo-login { margin-block-start: 1rem; }

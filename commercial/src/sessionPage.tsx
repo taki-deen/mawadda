@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { demoPeople, isAnswered, type DraftAnswer, type QuestionView, type ReviewStatus, type SessionView } from './types';
 import type { ProfileApi } from './androidProfiles';
 import { SessionProfilePanel } from './profileDetails';
+import { ApiError } from './apiClient';
 
 type Run = (work: () => Promise<void>) => void;
 type Panel = 'overview' | 'answers' | 'invite' | 'sharing' | 'comparison' | 'profile';
@@ -18,11 +19,13 @@ export function SessionPage({ id, demo, profileSharing, androidEdition, api, run
   const [drafts, setDrafts] = useState<Partial<Record<number, DraftAnswer>>>({});
   const [inviteUrl, setInviteUrl] = useState('');
   const [loadError, setLoadError] = useState('');
+  const [retryAt, setRetryAt] = useState(0);
   const [loadingCategory, setLoadingCategory] = useState(true);
   const sequence = useRef(0);
   const positions = useRef<Partial<Record<number, number>>>({});
   const categoryHeading = useRef<HTMLHeadingElement>(null);
   const focusHeading = useRef(false);
+  const pausedUntil = useRef(0);
   const base = `/sessions/${id}`;
   const hasDrafts = Object.values(drafts).some(Boolean);
   useEffect(() => {
@@ -36,16 +39,22 @@ export function SessionPage({ id, demo, profileSharing, androidEdition, api, run
     const requestNumber = ++sequence.current;
     try {
       const result = await api<SessionView>(`${base}?category=${category}`);
-      if (requestNumber === sequence.current) { setSession(result); setLoadError(''); setLoadingCategory(false); }
+      if (requestNumber === sequence.current) { setSession(result); setLoadError(''); setLoadingCategory(false); setRetryAt(0); pausedUntil.current = 0; }
     } catch (error) {
-      if (requestNumber === sequence.current) { setLoadError((error as Error).message); setLoadingCategory(false); }
+      if (requestNumber === sequence.current) {
+        setLoadError(error instanceof Error ? error.message : 'تعذّر تحميل المحور.');
+        setLoadingCategory(false);
+        const until = error instanceof ApiError ? error.retryAt : 0;
+        setRetryAt(until);
+        pausedUntil.current = until;
+      }
     }
   }, [api, base, category]);
 
   useEffect(() => {
-    const whenVisible = () => { if (!document.hidden) void refresh(); };
+    const whenVisible = () => { if (!document.hidden && pausedUntil.current <= Date.now()) void refresh(); };
     void refresh();
-    const timer = window.setInterval(whenVisible, 5000);
+    const timer = window.setInterval(whenVisible, 15_000);
     document.addEventListener('visibilitychange', whenVisible);
     window.addEventListener('focus', whenVisible);
     return () => {
@@ -53,6 +62,12 @@ export function SessionPage({ id, demo, profileSharing, androidEdition, api, run
       document.removeEventListener('visibilitychange', whenVisible); window.removeEventListener('focus', whenVisible);
     };
   }, [refresh]);
+
+  useEffect(() => {
+    if (!retryAt) return;
+    const timer = window.setTimeout(() => setRetryAt(0), Math.max(0, retryAt - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [retryAt]);
 
   useEffect(() => {
     if (loadingCategory || !focusHeading.current) return;
@@ -64,8 +79,11 @@ export function SessionPage({ id, demo, profileSharing, androidEdition, api, run
     await api(base + path, method, body); await refresh(); onMessage(message);
   });
 
+  const retryButton = loadError && <button type="button" className="button secondary" disabled={Boolean(retryAt)}
+    onClick={() => { setLoadError(''); setLoadingCategory(true); void refresh(); }}>إعادة المحاولة</button>;
+
   if (!session) return <section className="card"><button className="plain" onClick={onBack}>العودة إلى جلساتي</button>
-    <p role={loadError ? 'alert' : 'status'}>{loadError || 'جارٍ تحميل الجلسة…'}</p></section>;
+    <p role={loadError ? 'alert' : 'status'}>{loadError || 'جارٍ تحميل الجلسة…'}</p>{retryButton}</section>;
 
   const firstPending = session.questions.findIndex(item => !isAnswered(item.answer) && !item.answer.deferred);
   const questionIndex = Math.min(current ?? (firstPending < 0 ? 0 : firstPending), session.questions.length - 1);
@@ -87,6 +105,8 @@ export function SessionPage({ id, demo, profileSharing, androidEdition, api, run
     focusHeading.current = true;
     setLoadingCategory(true);
     setLoadError('');
+    setRetryAt(0);
+    pausedUntil.current = 0;
     positions.current[next] = index;
     setCurrent(index);
     setCategory(next);
@@ -134,9 +154,9 @@ export function SessionPage({ id, demo, profileSharing, androidEdition, api, run
     </nav>
     {!isReady && <section className="card" aria-busy={loadingCategory}>
       <p role={loadError ? 'alert' : 'status'}>{loadError || 'جارٍ تحميل المحور…'}</p>
-      {loadError && <button type="button" className="button secondary" onClick={() => { setLoadError(''); setLoadingCategory(true); void refresh(); }}>إعادة المحاولة</button>}
+      {retryButton}
     </section>}
-    {isReady && panel === 'overview' && <>
+    {panel === 'overview' && <>
       {!session.closed && <section className="card journey-next">
         <div><h2>{session.partnerAlias ? 'الطرف الآخر انضم' : 'بانتظار الطرف الآخر'}</h2>
           <p className="muted">{session.partnerAlias ? 'اختَر محورًا للمتابعة، أو افتح المقارنة للمحور اللي شاركتوه.' : 'بتقدر تبدأ بالإجابة بشكل خاص قبل ما ينضم الطرف الآخر.'}</p></div>

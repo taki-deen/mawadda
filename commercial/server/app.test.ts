@@ -11,6 +11,7 @@ import type { AdminStats, ContentView } from '../src/adminTypes';
 import { createApp } from './app';
 import { ensureQuestionnaire } from './catalog';
 import { connectDatabase } from './database';
+import { categoryQuota, categoryWindow } from './rateLimits';
 
 test('age changes on the birthday and handles leap-day dates', () => {
   assert.equal(ageFromBirthDate('2008-02-29', new Date('2026-02-28T12:00:00Z')), 17);
@@ -25,7 +26,9 @@ test('two-party pilot keeps answers private and enforces versioned consent and r
   const catalog = await connection.db.questionnaire.findUniqueOrThrow({ where: { id: questionnaire } });
   assert.equal((catalog.content as { questions: unknown[] }).questions.length, 150);
   const ownerPassword = randomUUID();
-  const server = createApp(connection.db, questionnaire, { demo: true }, undefined, undefined, [], [], ownerPassword).listen(0, '127.0.0.1');
+  let now = Date.now();
+  const server = createApp(connection.db, questionnaire, { demo: true }, undefined, undefined, [], [], ownerPassword,
+    { now: () => now }).listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(async () => {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
@@ -156,8 +159,22 @@ test('two-party pilot keeps answers private and enforces versioned consent and r
   const before = await view(one);
   assert.equal(before.questions.length, 10);
   assert.equal(before.categories.length, 15);
+  for (let category = 1; category < categoryQuota; category++) await view(one, category);
+  const limited = await fetch(`${origin}${base}?category=${categoryQuota}`, { headers: { Authorization: `Bearer ${one}` } });
+  assert.equal(limited.status, 429);
+  assert.equal(limited.headers.get('retry-after'), String(categoryWindow / 1000));
+  assert.equal('questions' in await limited.json(), false);
+  await view(one);
+  await view(two, categoryQuota);
+  const otherSession = await call<{ id: string }>('/sessions', one, 'POST', { alias: 'جلسة لفحص حصة المحاور' });
+  await call(`/sessions/${otherSession.id}?category=${categoryQuota}`, one, 'GET', undefined, 429);
+  await call(`/sessions/${otherSession.id}?category=0`, one);
+  now += categoryWindow;
+  await view(one, categoryQuota);
+  now += categoryWindow;
   const allQuestions = [];
   for (const category of before.categories.keys()) {
+    if (category && category % categoryQuota === 0) now += categoryWindow;
     const selected = await view(one, category);
     assert.equal(selected.category, category);
     assert.equal(selected.title, before.categories[category]);
@@ -279,6 +296,20 @@ test('two-party pilot keeps answers private and enforces versioned consent and r
   assert.equal(await connection.db.answer.count({ where: { sessionId: id } }), 2);
   assert.equal(await connection.db.consent.count({ where: { sessionId: id } }), 0);
   assert.equal(await connection.db.review.count({ where: { sessionId: id } }), 0);
+
+  now += 10 * 60_000;
+  for (let attempt = 0; attempt < 5; attempt++) await call('/sessions', stranger, 'POST', { alias: 'جلسة لفحص حد الإنشاء' });
+  await call('/sessions', stranger, 'POST', { alias: 'طلب فوق الحد' }, 429);
+  await call('/sessions', one, 'POST', { alias: 'حساب آخر ضمن الحد' });
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await call('/dev/sign-in', '', 'POST', { email: demoPeople[0].email });
+  }
+  const limitedLogin = await fetch(`${origin}/dev/sign-in`, { method: 'POST', headers: {
+    'Content-Type': 'application/json', 'X-Forwarded-For': '192.0.2.10', 'CF-Connecting-IP': '192.0.2.10',
+  }, body: JSON.stringify({ email: demoPeople[1].email }) });
+  assert.equal(limitedLogin.status, 429);
+  assert.equal(limitedLogin.headers.get('retry-after'), '60');
+  await call('/me', one);
 });
 
 test('the category migration preserves existing first-category consent', async () => {
