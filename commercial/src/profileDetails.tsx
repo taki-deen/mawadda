@@ -91,8 +91,8 @@ export function PersonalFields({ details }: { details: PersonalDetails }) {
   const [gender, setGender] = useState<ProfileGender | ''>(details.gender ?? '');
 
   return <>
-    <fieldset className="personal-group">
-      <legend>معلومات شخصية</legend>
+    <details className="profile-section">
+      <summary>معلومات شخصية</summary>
       <div className="personal-fields">
         <AgeFields details={details} />
         <ProfileChoice name="socialStatus" value={details.socialStatus} />
@@ -102,9 +102,9 @@ export function PersonalFields({ details }: { details: PersonalDetails }) {
         <ProfileTextField label="مجال العمل" name="jobField" value={details.jobField} maxLength={80} />
         <ProfileChoice name="housing" value={details.housing} />
       </div>
-    </fieldset>
-    <fieldset className="personal-group">
-      <legend>المظهر</legend>
+    </details>
+    <details className="profile-section">
+      <summary>المظهر</summary>
       <div className="personal-fields">
         <ProfileChoices label="الجنس" name="gender" value={gender} onChange={value => setGender(value as ProfileGender | '')} options={[
           ...Object.entries(profileGenderLabels).map(([value, label]) => ({ value, label })), { value: '', label: 'بدون اختيار' },
@@ -115,15 +115,15 @@ export function PersonalFields({ details }: { details: PersonalDetails }) {
         </div>
         <AppearanceFields details={details} gender={gender} />
       </div>
-    </fieldset>
-    <fieldset className="personal-group">
-      <legend>الوضع المالي</legend>
+    </details>
+    <details className="profile-section">
+      <summary>الوضع المالي</summary>
       <div className="personal-fields">
         <IncomeFields income={details.income} />
         <ProfileChoice name="incomeStability" value={details.incomeStability} />
         <ProfileChoice name="commitments" value={details.commitments} />
       </div>
-    </fieldset>
+    </details>
   </>;
 }
 

@@ -17,7 +17,10 @@ function ProfileForm({ profile, api, busy, onSave }: {
   const [location, setLocation] = useState<{ countryCode: string; cityId: string | null }>();
   const supportsLocations = profile.countryCode !== undefined;
 
-  return <form onSubmit={event => {
+  return <form className="profile-edit" onInvalidCapture={event => {
+    const section = (event.target as HTMLElement).closest<HTMLDetailsElement>('details.profile-section');
+    if (section) section.open = true;
+  }} onSubmit={event => {
     event.preventDefault();
     const fields = new FormData(event.currentTarget);
     const basics = { displayName: String(fields.get('displayName')),
@@ -38,10 +41,10 @@ function ProfileForm({ profile, api, busy, onSave }: {
         <ProfileChoices label="حالة الخطوبة" name="engagement" initialValue={profile.engagement} options={engagementOptions} />
       </div>
       {profile.personalDetails && <PersonalFields details={profile.personalDetails} />}
-      {Boolean(profile.customFields?.length) && <fieldset className="personal-group"><legend>حقول إضافية</legend>
+      {Boolean(profile.customFields?.length) && <details className="profile-section"><summary>حقول إضافية</summary>
         <div className="personal-fields">{profile.customFields?.map(field =>
           <CustomProfileField key={field.id} field={field} value={profile.customValues?.[field.id]} />)}</div>
-      </fieldset>}
+      </details>}
       <button className="button">حفظ الملف الشخصي</button>
     </fieldset>
   </form>;
